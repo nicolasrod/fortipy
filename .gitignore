@@ -1,8 +1,9 @@
-
 *.iml
-
-.idea/.name
-
+.idea/*
 *.xml
-
 *.txt
+*.fvdl
+*.mac
+*.old
+*.properties
+test/*

@@ -20,6 +20,10 @@ Node = namedtuple("Node", "is_default snippet_id source_location action reason k
 Trace = namedtuple("Trace", "nodes nodes_ref")
 KeyValue = namedtuple("KeyValue", "key value")
 TypeValue = namedtuple("TypeValue", "type value")
+Description = namedtuple("Description", "content_type class_id abstract explanation recommendations references")
+Reference = namedtuple("Reference", "title author")
+Snippet = namedtuple("Snippet", "id file line_start line_end text")
+FunctionDef = namedtuple("FunctionDef", "name namespace enclosing_class")
 
 
 def _xpath(path):
@@ -45,6 +49,10 @@ def _get_node(root, p, fn=lambda node: node.text):
 
 def _get_attr(name):
     return lambda node: node.attrib.get(name, None)
+
+
+def _get_text(node):
+    return node.text
 
 
 def _make_node_ref(root):
@@ -110,10 +118,6 @@ def _make_vulnerability(root):
         analysis_info=_get_node(root, "./AnalysisInfo", _make_analysis_info))
 
 
-def _make_vulnerabilities(root):
-    return _get_nodes(root, "./Vulnerabilities/Vulnerability", _make_vulnerability)
-
-
 def _make_location(root):
     return Location(
         path=root.attrib.get("path", None),
@@ -131,11 +135,6 @@ def _make_context(root):
         decl_location=_get_node(root, "./FunctionDeclarationSourceLocation", _make_location))
 
 
-# TODO: thinkg about unpacking these values
-# <Def key="EnclosingFunction.name" value="jointOperationSignatures()"/>
-# <Def key="PrimaryCall.name" value="error()"/>
-# <Def key="PrimaryLocation.file" value="MultipleSignServiceImpl.java"/>
-# <Def key="PrimaryLocation.line" value="221"/>
 def _make_replacement_defs(root):
     return ReplacementDefs(
         location=_get_node(root, "./LocationDef", _make_location),
@@ -154,6 +153,38 @@ def _make_analysis_info(root):
         context=_get_node(root, "./Unified/Context", _make_context),
         replacement_defs=_get_node(root, "./Unified/ReplacementDefinitions", _make_replacement_defs),
         trace=_get_node(root, "./Unified/Trace/Primary", _make_trace))
+
+
+def _make_reference(root):
+    return Reference(
+        title=_get_node(root, "./Title", _get_text),
+        author=_get_node(root, "./Author", _get_text))
+
+
+def _make_description(root):
+    return Description(
+        content_type=root.attrib.get("contentType", None),
+        class_id=root.attrib.get("classID", None),
+        explanation=_get_node(root, "./Explanation", _get_text),
+        abstract=_get_node(root, "./Abstract", _get_text),
+        recommendations=_get_node(root, "./Recommendations", _get_text),
+        references=_get_nodes(root, "./References/Reference", _make_reference))
+
+
+def _make_snippet(root):
+    return Snippet(
+        id=root.attrib.get("id", None),
+        file=_get_node(root, "./File", _get_text),
+        line_start=_get_node(root, "./StartLine", _get_text),
+        line_end=_get_node(root, "./EndLine", _get_text),
+        text=_get_node(root, "./Text", _get_text))
+
+
+def _make_function_def(root):
+    return FunctionDef(
+        name=root.attrib.get("name", None),
+        namespace=root.attrib.get("namespace", None),
+        enclosing_class=root.attrib.get("enclosingClass", None))
 
 
 class FPR(object):
@@ -177,8 +208,11 @@ class FPR(object):
         else:
             root = cElementTree.parse(filename).getroot()
 
-        self.Vulnerabilities = _make_vulnerabilities(root)
+        self.Vulnerabilities = _get_nodes(root, "./Vulnerabilities/Vulnerability", _make_vulnerability)
         self.Build = _make_build(root)
+        self.Descriptions = _get_nodes(root, "./Description", _make_description)
+        self.Snippets = _get_nodes(root, "./Snippets/Snippet", _make_snippet)
+        self.CalledWithNoDef = _get_nodes(root, "./ProgramData/CalledWithNoDef/Function", _make_function_def)
 
     def __enter__(self):
         return self
@@ -216,3 +250,11 @@ if __name__ == "__main__":
     fpr = FPR("test/audit.fvdl")
     print fpr.get_types_of_vulns()
     print fpr.get_vulns_of_type("dead code")
+
+    print fpr.CalledWithNoDef
+
+    for d in fpr.Snippets:
+        print "=" * 60
+        print d.id, d.file, d.line_start, d.line_end
+        print d.text
+        print "=" * 60
