@@ -24,6 +24,11 @@ Description = namedtuple("Description", "content_type class_id abstract explanat
 Reference = namedtuple("Reference", "title author")
 Snippet = namedtuple("Snippet", "id file line_start line_end text")
 FunctionDef = namedtuple("FunctionDef", "name namespace enclosing_class")
+EngineData = namedtuple("EngineData", "version properties rule_packs command_line errors machine_info license_info")
+RulePack = namedtuple("RulePack", "sku name version mac")
+MachineInfo = namedtuple("MachineInfo", "hostname username platform")
+LicenseInfo = namedtuple("LicenseInfo", "metadata capabilities")
+Capability = namedtuple("Capability", "name expiration")
 
 
 def _xpath(path):
@@ -187,6 +192,54 @@ def _make_function_def(root):
         enclosing_class=root.attrib.get("enclosingClass", None))
 
 
+def _make_rule_pack(root):
+    return RulePack(
+        sku=root.attrib.get("SKU", None),
+        name=root.attrib.get("Name", None),
+        version=root.attrib.get("Version", None),
+        mac=root.attrib.get("MAC", None))
+
+
+def _make_property(root):
+    return KeyValue(
+        key=_get_node(root, "./name", _get_text),
+        value=_get_node(root, "./value", _get_text))
+
+
+def _make_error(root):
+    return KeyValue(
+        key=root.attrib.get("code", None),
+        value=root.text)
+
+
+def _make_machine_info(root):
+    return MachineInfo(
+        hostname=_get_node(root, "./Hostname", _get_text),
+        username=_get_node(root, "./Username", _get_text),
+        platform=_get_node(root, "./Platform", _get_text))
+
+
+def _make_license_info(root):
+    return LicenseInfo(
+        metadata=_get_nodes(root, "./Metadata", lambda node: KeyValue(
+            key=_get_node(node, "./name", _get_text),
+            value=_get_node(node, "./value", _get_text))),
+        capabilities=_get_nodes(root, "./Capability", lambda node: Capability(
+            name=_get_node(node, "./Name", _get_text),
+            expiration=_get_node(node, "./Expiration", _get_text))))
+
+
+def _make_engine_data(root):
+    return EngineData(
+        version=_get_node(root, "./EngineVersion", _get_text),
+        rule_packs=_get_nodes(root, "./RulePacks/RulePack", _make_rule_pack),
+        properties=_get_nodes(root, "./Properties/Property", _make_property),
+        command_line=_get_nodes(root, "./CommandLine/Argument", _get_text),
+        errors=_get_nodes(root, "./Errors/Error", _make_error),
+        machine_info=_get_node(root, "./MachineInfo", _make_machine_info),
+        license_info=_get_node(root, "./LicenseInfo", _make_license_info))
+
+
 class FPR(object):
     def __init__(self, filename=None):
         if not exists(filename):
@@ -208,11 +261,12 @@ class FPR(object):
         else:
             root = cElementTree.parse(filename).getroot()
 
-        self.Vulnerabilities = _get_nodes(root, "./Vulnerabilities/Vulnerability", _make_vulnerability)
-        self.Build = _make_build(root)
-        self.Descriptions = _get_nodes(root, "./Description", _make_description)
-        self.Snippets = _get_nodes(root, "./Snippets/Snippet", _make_snippet)
-        self.CalledWithNoDef = _get_nodes(root, "./ProgramData/CalledWithNoDef/Function", _make_function_def)
+        self.vulnerabilities = _get_nodes(root, "./Vulnerabilities/Vulnerability", _make_vulnerability)
+        self.build = _make_build(root)
+        self.descriptions = _get_nodes(root, "./Description", _make_description)
+        self.snippets = _get_nodes(root, "./Snippets/Snippet", _make_snippet)
+        self.called_with_no_def = _get_nodes(root, "./ProgramData/CalledWithNoDef/Function", _make_function_def)
+        self.engine_data = _get_node(root, "./EngineData", _make_engine_data)
 
     def __enter__(self):
         return self
@@ -230,11 +284,11 @@ class FPR(object):
         self.temppath = None
 
     def get_types_of_vulns(self):
-        return set([x.class_info.type for x in self.Vulnerabilities if x is not None and
+        return set([x.class_info.type for x in self.vulnerabilities if x is not None and
                     x.class_info is not None and x.class_info.type is not None])
 
     def get_vulns_of_type(self, vtype):
-        return [x for x in self.Vulnerabilities if x is not None and x.class_info is not None and
+        return [x for x in self.vulnerabilities if x is not None and x.class_info is not None and
                 x.class_info.type.strip().lower() == vtype.lower().strip()]
 
     def get_code_for(self, filename):
@@ -248,13 +302,19 @@ class FPR(object):
 
 if __name__ == "__main__":
     fpr = FPR("test/audit.fvdl")
+
+    print fpr.engine_data.license_info
     print fpr.get_types_of_vulns()
     print fpr.get_vulns_of_type("dead code")
 
-    print fpr.CalledWithNoDef
+    print fpr.called_with_no_def
 
-    for d in fpr.Snippets:
+    for d in fpr.snippets:
         print "=" * 60
         print d.id, d.file, d.line_start, d.line_end
         print d.text
         print "=" * 60
+
+    print "=" * 80
+
+    print fpr.engine_data.machine_info
